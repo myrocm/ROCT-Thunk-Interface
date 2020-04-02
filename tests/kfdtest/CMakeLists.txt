@@ -28,6 +28,16 @@ cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
 
 project(KFDTest)
 
+# For DEB/RPM generation
+set ( CPACK_PACKAGE_FILE_NAME "kfdtest" )
+set ( CPACK_PACKAGE_CONTACT "Advanced Micro Devices Inc." )
+set ( CPACK_PACKAGE_DESCRIPTION "This package includes kfdtest, the list of excluded tests for each ASIC, and a convenience script to run the test suite" )
+set ( CPACK_PACKAGE_DESCRIPTION_SUMMARY "Test suite for ROCK/KFD" )
+set ( CPACK_PACKAGE_VERSION_MAJOR "1" )
+set ( CPACK_PACKAGE_VERSION_MINOR "0" )
+set ( CPACK_PACKAGE_VERSION_PATCH "0" )
+set ( CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/RadeonOpenCompute/ROCT-Thunk-Interface" )
+
 #set ( CMAKE_VERBOSE_MAKEFILE on )
 
 find_package(PkgConfig)
@@ -47,15 +57,30 @@ else()
     include_directories(${DRM_AMDGPU_INCLUDE_DIRS})
 endif()
 
+## Define default variable and variables for the optional build target hsakmt-dev
+set ( SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} CACHE STRING "Location of hsakmt source code." )
+set ( CMAKE_INSTALL_PREFIX "/opt/rocm"  CACHE STRING "Default installation directory." )
+set ( CPACK_PACKAGING_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}"  CACHE STRING "Default packaging prefix." )
+set ( CPACK_GENERATOR "DEB;RPM"  CACHE STRING "Default packaging generators." )
+
+# Debian package specific variables
+set ( CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/RadeonOpenCompute/ROCT-Thunk-Interface" )
 
 if( DEFINED ENV{LIBHSAKMT_PATH} )
     set ( LIBHSAKMT_PATH $ENV{LIBHSAKMT_PATH} )
     message ( "LIBHSAKMT_PATH environment variable is set" )
 else()
-    set ( ENV{PKG_CONFIG_PATH} /opt/rocm/libhsakmt/ )
-    pkg_check_modules(HSAKMT libhsakmt)
+    if ( ${ROCM_INSTALL_PATH} )
+       set ( ENV{PKG_CONFIG_PATH} ${ROCM_INSTALL_PATH} )
+       pkg_check_modules(HSAKMT libhsakmt)
+    else()
+       set ( ENV{PKG_CONFIG_PATH} /opt/rocm/libhsakmt/ )
+       pkg_check_modules(HSAKMT libhsakmt)
+    endif()
     if( NOT HSAKMT_FOUND )
-        set ( LIBHSAKMT_PATH $ENV{OUT_DIR} )
+       set ( ENV{PKG_CONFIG_PATH} /opt/rocm/libhsakmt/ )
+       pkg_check_modules(HSAKMT libhsakmt)
+       set ( LIBHSAKMT_PATH $ENV{OUT_DIR} )
     endif()
 endif()
 
@@ -75,8 +100,52 @@ include_directories(${SP3_DIR})
 
 include_directories(${DRM_INCLUDE_DIRS})
 
-aux_source_directory(${PROJECT_SOURCE_DIR}/gtest-1.6.0 SRC_FILES)
-aux_source_directory(${PROJECT_SOURCE_DIR}/src SRC_FILES)
+set (SRC_FILES gtest-1.6.0/gtest-all.cpp
+
+  src/AqlQueue.cpp
+  src/BasePacket.cpp
+  src/BaseQueue.cpp
+  src/Dispatch.cpp
+  src/GoogleTestExtension.cpp
+  src/IndirectBuffer.cpp
+  src/IsaGenerator.cpp
+  src/IsaGenerator_Gfx10.cpp
+  src/IsaGenerator_Gfx72.cpp
+  src/IsaGenerator_Gfx8.cpp
+  src/IsaGenerator_Gfx9.cpp
+  src/LinuxOSWrapper.cpp
+  src/PM4Packet.cpp
+  src/PM4Queue.cpp
+  src/RDMAUtil.cpp
+  src/SDMAPacket.cpp
+  src/SDMAQueue.cpp
+  src/KFDBaseComponentTest.cpp
+  src/KFDMultiProcessTest.cpp
+  src/KFDTestMain.cpp
+  src/KFDTestUtil.cpp
+  src/KFDTestUtilQueue.cpp
+
+  src/KFDOpenCloseKFDTest.cpp
+  src/KFDTopologyTest.cpp
+  src/KFDMemoryTest.cpp
+  src/KFDLocalMemoryTest.cpp
+  src/KFDEventTest.cpp
+  src/KFDQMTest.cpp
+  src/KFDCWSRTest.cpp
+  src/KFDExceptionTest.cpp
+  src/KFDGraphicsInterop.cpp
+  src/KFDPerfCounters.cpp
+  src/KFDDBGTest.cpp
+  src/KFDGWSTest.cpp
+  src/KFDIPCTest.cpp
+
+  src/KFDEvictTest.cpp
+  src/KFDHWSTest.cpp
+  src/KFDPerformanceTest.cpp
+  src/KFDPMTest.cpp
+
+  src/KFDRASTest.cpp
+  src/RDMATest.cpp)
 
 message( STATUS "PROJECT_SOURCE_DIR:" ${PROJECT_SOURCE_DIR} )
 #message( STATUS "SRC_FILES: ")
@@ -87,7 +156,8 @@ message( STATUS "PROJECT_SOURCE_DIR:" ${PROJECT_SOURCE_DIR} )
 #add_definitions(-Wall -std=c++11)
 
 if ( "${CMAKE_C_COMPILER_VERSION}" STRGREATER "4.8.0")
-set ( CMAKE_CXX_FLAGS "-std=gnu++11" )
+## Add --enable-new-dtags to generate DT_RUNPATH
+set ( CMAKE_CXX_FLAGS "-std=gnu++11 -Wl,--enable-new-dtags" )
 endif()
 if ( "${CMAKE_BUILD_TYPE}" STREQUAL Release )
     set ( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2" )
@@ -107,3 +177,11 @@ target_link_libraries(kfdtest ${HSAKMT_LIBRARIES} ${DRM_LIBRARIES} ${DRM_AMDGPU_
 
 configure_file ( scripts/kfdtest.exclude kfdtest.exclude COPYONLY )
 configure_file ( scripts/run_kfdtest.sh run_kfdtest.sh COPYONLY )
+
+install( FILES ${CMAKE_CURRENT_BINARY_DIR}/kfdtest ${CMAKE_CURRENT_BINARY_DIR}/run_kfdtest.sh
+	PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_EXECUTE GROUP_WRITE GROUP_READ WORLD_EXECUTE WORLD_READ
+	DESTINATION bin )
+install( FILES ${CMAKE_CURRENT_BINARY_DIR}/kfdtest.exclude
+	PERMISSIONS OWNER_WRITE OWNER_READ GROUP_WRITE GROUP_READ WORLD_READ
+	DESTINATION share/kfdtest )
+include ( CPack )

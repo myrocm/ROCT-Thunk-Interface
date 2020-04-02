@@ -1492,9 +1492,6 @@ static int bind_mem_to_numa(uint32_t node_id, void *mem,
 	numa_bitmask_free(node_mask);
 
 	if (r) {
-		pr_warn_once("Failed to set NUMA policy for %p: %s\n", mem,
-			     strerror(errno));
-
 		/* If applcation is running inside docker, still return
 		 * ok because docker seccomp blocks mbind by default,
 		 * otherwise application cannot allocate system memory.
@@ -1504,6 +1501,13 @@ static int bind_mem_to_numa(uint32_t node_id, void *mem,
 
 			return 0;
 		}
+
+		/* Ignore mbind failure if no memory available on node */
+		if (!flags.ui32.NoSubstitute)
+			return 0;
+
+		pr_warn_once("Failed to set NUMA policy for %p: %s\n", mem,
+			     strerror(errno));
 
 		return -EFAULT;
 	}
@@ -3272,6 +3276,7 @@ HSAKMT_STATUS fmm_register_shared_memory(const HsaSharedMemoryHandle *SharedMemo
 			err = HSAKMT_STATUS_ERROR;
 			goto err_free_obj;
 		}
+		obj->node_id = gpu_mem[gpu_mem_id].node_id;
 		map_fd = importArgs.mmap_offset >= (1ULL<<40) ? kfd_fd :
 					gpu_mem[gpu_mem_id].drm_render_fd;
 		ret = mmap(reservedMem, (SizeInPages << PAGE_SHIFT),
@@ -3492,7 +3497,9 @@ HSAKMT_STATUS fmm_get_mem_info(const void *address, HsaPointerInfo *info)
 	}
 	/* Successful vm_find_object returns with the aperture locked */
 
-	if (vm_obj->metadata)
+	if (vm_obj->is_imported_kfd_bo)
+		info->Type = HSA_POINTER_REGISTERED_SHARED;
+	else if (vm_obj->metadata)
 		info->Type = HSA_POINTER_REGISTERED_GRAPHICS;
 	else if (vm_obj->userptr)
 		info->Type = HSA_POINTER_REGISTERED_USER;
@@ -3565,6 +3572,8 @@ HSAKMT_STATUS fmm_set_mem_user_data(const void *mem, void *usr_data)
 static void fmm_clear_aperture(manageable_aperture_t *app)
 {
 	rbtree_node_t *n;
+
+	pthread_mutex_init(&app->fmm_mutex, NULL);
 
 	while ((n = rbtree_node_any(&app->tree, MID)))
 		vm_remove_object(app, vm_object_entry(n, 0));

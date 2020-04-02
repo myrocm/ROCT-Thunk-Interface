@@ -22,15 +22,62 @@
 #
 #
 
+# See if we can find the SHARE/BIN dirs in their expected locations
+CWD="${0%/*}"
+while read candidate; do
+    if [ -e "$candidate/kfdtest.exclude" ]; then
+        source "$candidate/kfdtest.exclude"
+        break
+    fi
+done <<EOF
+$KFDTEST_SHARE_DIR
+$CWD
+$CWD/../share/kfdtest
+/opt/rocm/share/kfdtest
+EOF
 
-if [ "$BIN_DIR" == "" ]; then
-    BIN_DIR="$(pwd)/$(dirname $0)"
+# Keep these checks until automation starts using the package install
+if [ -z "${FILTER[core]}" ]; then
+    if [ -e "$CWD/../bin/kfdtest/kfdtest.exclude" ]; then
+        source "$CWD/../bin/kfdtest/kfdtest.exclude"
+    elif [ -e "$CWD/../../share/kfdtest.exclude" ]; then
+        source "$CWD/../../share/kfdtest.exclude"
+    fi
+fi
+
+# This filter will always exist if we sourced a valid kfdtest.exclude
+if [ -z "${FILTER[core]}" ]; then
+    echo "Unable to locate kfdtest.exclude."
+    echo "Please set KFDTEST_SHARE_DIR or ensure that kfdtest.exclude is present inside $CWD, $CWD/../share/kfdtest or /opt/rocm/share/kfdtest"
+    exit 1
+fi
+
+# Using "which" produces different results in different
+# OSes so use command -v instead. It returns "" if the
+# command isn't in the PATH
+if [ -z "$(command -v kfdtest)" ]; then
+    if [ -z "$BIN_DIR" ]; then
+        if [ -e "${0%/*}/kfdtest" ]; then
+            BIN_DIR="${0%/*}"
+        else
+            # The default location
+            BIN_DIR="/opt/rocm/bin"
+        fi
+    fi
+    if [ -e "$BIN_DIR/kfdtest" ]; then
+        KFDTEST="$BIN_DIR/kfdtest"
+    else
+        echo "Unable to locate kfdtest."
+        echo "Please set BIN_DIR, ensure that kfdtest is in $PATH, or ensure that kfdtest is present inside ${0%/*} or /opt/rocm/bin"
+        exit 1
+    fi
+else
+    KFDTEST="kfdtest"
 fi
 
 PLATFORM=""
 GDB=""
 NODE=""
-MULTI_GPU=""
 FORCE_HIGH=""
 RUN_IN_DOCKER=""
 
@@ -58,8 +105,6 @@ printUsage() {
     return 0
 }
 # Print gtest_filter for the given Platform
-# If MULTI_GPU flag is set, then Multi-GPU Tests are selected. Once all tests
-# pass in Multi GPU environment, this flag can be removed
 #    param - Platform.
 getFilter() {
 # For regular platforms such as vega10, this will automatically generate
@@ -118,11 +163,14 @@ runKfdTest() {
 
     if [ "$NODE" == "" ]; then
         hsaNodes=$(getHsaNodes)
+
+        if [ "$hsaNodes" == "" ]; then
+            echo "No GPU found in the system."
+            exit 1
+        fi
     else
         hsaNodes=$NODE
     fi
-
-    source $BIN_DIR/kfdtest.exclude
 
     for hsaNode in $hsaNodes; do
         nodeName=$(getNodeName $hsaNode)
@@ -173,16 +221,6 @@ getGPUCount() {
     echo "$gpuCount"
 }
 
-# set $MULTI_GPU flag if the system has more than 1 GPU
-setMultiGPUFlag() {
-    gpuCount=$(getGPUCount)
-    if [ $gpuCount -gt 1 ]; then
-        MULTI_GPU=1
-    else
-        MULTI_GPU=0
-    fi
-}
-
 while [ "$1" != "" ]; do
     case "$1" in
         -p  | --platform )
@@ -205,14 +243,12 @@ while [ "$1" != "" ]; do
     shift 1
 done
 
-KFDTEST="$BIN_DIR/kfdtest"
-
+# If compute_utils.sh doesn't exist, this will just silently do nothing
 if [ "$FORCE_HIGH" == "true" ]; then
     pushGpuDpmState high
     pushTrap "popGpuDpmState" EXIT
 fi
 
-setMultiGPUFlag
 # Set HSA_DEBUG env to run KFDMemoryTest.PtraceAccessInvisibleVram
 export HSA_DEBUG=1
 runKfdTest
